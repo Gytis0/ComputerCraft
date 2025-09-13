@@ -1,15 +1,4 @@
-function save(table,name)
-    local file = fs.open(fs.getDir(shell.getRunningProgram()) .. "/inventoryData/" .. name,"w")
-    file.write(textutils.serialize(table))
-    file.close()
-end
-
-function load(name)
-    local file = fs.open(fs.getDir(shell.getRunningProgram()) .. "/inventoryData/" .. name,"r")
-    local data = file.readAll()
-    file.close()
-    return textutils.unserialize(data)
-end
+local inventoryData = require("inventoryData")
 
 function getAllInventories()
     modem = peripheral.find("modem")
@@ -27,56 +16,79 @@ function getAllInventories()
 end
 
 function scanInventories(append)
-    allInventories = getAllInventories()
-    
-    for k, v in pairs(allInventories) do
+    local allInventories = getAllInventories()
+
+    for _, inventoryName in ipairs(allInventories) do
+        local data
+
         if append then
-            data = load(v .. "_items.txt")
+            data = loadInventoryData(inventoryName .. "_items.txt") or {
+                inventoryName = inventoryName,
+                items = {}
+            }
         else
-            data = {inventoryName = v, items = {}}
+            data = {
+                inventoryName = inventoryName,
+                items = {}
+            }
         end
 
-        inventory = peripheral.wrap(v)
-        for slot, item in pairs(inventory.list()) do
-            if data["items"][item.name] == nil then
-                data["items"][item.name] = {}
+        local chest = peripheral.wrap(inventoryName)
+        local items = chest.list()
+
+        for slot, item in pairs(items) do
+            if not data.items[item.name] then
+                data.items[item.name] = {}
             end
-
-            data["items"][item.name][slot] = true
+            data.items[item.name][slot] = true
         end
 
-        save(data, v .. "_items.txt")
+        saveInventoryData(data, inventoryName .. "_items.txt")
     end
 end
 
 function findInputAndTrashChests()
-    modem = peripheral.find("modem")
-    allPeripherals = modem.getNamesRemote()
-    allTrappedChests = {}
+    local modem = peripheral.find("modem")
+    if not modem then
+        error("No modem found!")
+    end
 
-    for index, peripheralName in pairs(allPeripherals) do
-        peripheralType = peripheral.getType(peripheralName)
-        if peripheralType == "minecraft:trapped_chest" then
-            table.insert(allTrappedChests, peripheralName)
+    local allPeripherals = modem.getNamesRemote()
+    local inputChests = {}
+    local trashChests = {}
+
+    for _, peripheralName in pairs(allPeripherals) do
+        local peripheralType = peripheral.getType(peripheralName)
+
+        if peripheralType == "minecraft:chest" or peripheralType == "minecraft:barrel" or peripheralType == "minecraft:trapped_chest" then
+            local chest = peripheral.wrap(peripheralName)
+            local items = chest.list()
+
+            for slot, item in pairs(items) do
+                if item.name == "minecraft:paper" and item.displayName then
+                    local lowerName = string.lower(item.displayName)
+
+                    if lowerName == "input" then
+                        table.insert(inputChests, chest)
+                        break
+                    elseif lowerName == "trash" then
+                        table.insert(trashChests, chest)
+                        break
+                    end
+                end
+            end
         end
     end
 
-    if string.sub(allTrappedChests[1], string.len(allTrappedChests[1]), string.len(allTrappedChests[1])) > string.sub(allTrappedChests[2], string.len(allTrappedChests[2]), string.len(allTrappedChests[2])) then
-        trashChest = peripheral.wrap(allTrappedChests[1])
-        inputChest = peripheral.wrap(allTrappedChests[2])
-    else
-        inputChest = peripheral.wrap(allTrappedChests[1])
-        trashChest = peripheral.wrap(allTrappedChests[2])
-    end
-
-    return inputChest, trashChest
+    return inputChests, trashChests
 end
+
 
 function findItemPlace(itemName)
     allFiles = fs.list(fs.getDir(shell.getRunningProgram()) .. "/inventoryData")
 
     for k,v in pairs(allFiles) do
-        data = load(v)
+        data = loadInventoryData(v)
         if data["items"][itemName] ~= nil then return data["inventoryName"], data["items"][itemName] end
     end
 
@@ -140,6 +152,7 @@ function sortItems()
     end
 end
 
+------------------------------------------------------------
 -- Only the first two trapped chests will be accounted for
 -- Only chests and barrels will be counted as storage
 -- Temporarily, only four redstone signals are accepted:
